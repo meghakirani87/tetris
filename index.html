@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Tetris</title>
+  <style>
+    body      { font-family: Helvetica, sans-serif; background-color: #FFCCCC;}
+    #tetris   { margin: 0.5em auto; padding: 0.5em; border: 4px solid black; border-radius: 40px; background-color: #B2FFB2; }
+    #canvas   { display: inline-block; vertical-align: top;  border: 2px solid #333; }
+    #menu     { display: inline-block; vertical-align: top; position: relative; }
+    #menu p   { margin: 0.5em 0; text-align: center; }
+    #menu p a { text-decoration: none; color: black; }
+    #upcoming { display: block; margin: 0 auto; background-color: #FF5050; }
+    #rows     { color: blue; font-weight: bold; vertical-align: middle; }
+
+    /* @media queries is a CSS3 feature which helps in writing code specific to device. */
+    @media screen and (min-width:   0px) and (min-height:   0px)  { #tetris { font-size: 0.75em; width: 450px; } #menu { width: 100px; height: 200px; } #upcoming { width:  50px; height:  50px; } #canvas { width: 150px; height: 150px; } } 
+    @media screen and (min-width: 400px) and (min-height: 400px)  { #tetris { font-size: 1.00em; width: 550px; } #menu { width: 150px; height: 300px; } #upcoming { width:  75px; height:  75px; } #canvas { width: 225px; height: 225px; } } 
+    @media screen and (min-width: 500px) and (min-height: 500px)  { #tetris { font-size: 1.25em; width: 650px; } #menu { width: 200px; height: 400px; } #upcoming { width: 100px; height: 100px; } #canvas { width: 300px; height: 300px; } } 
+    @media screen and (min-width: 600px) and (min-height: 600px)  { #tetris { font-size: 1.50em; width: 750px; } #menu { width: 250px; height: 500px; } #upcoming { width: 125px; height: 125px; } #canvas { width: 375px; height: 375px; } } 
+    @media screen and (min-width: 700px) and (min-height: 700px)  { #tetris { font-size: 1.75em; width: 850px; } #menu { width: 300px; height: 600px; } #upcoming { width: 150px; height: 150px; } #canvas { width: 450px; height: 450px; } } 
+    @media screen and (min-width: 800px) and (min-height: 800px)  { #tetris { font-size: 2.00em; width: 950px; } #menu { width: 350px; height: 700px; } #upcoming { width: 175px; height: 175px; } #canvas { width: 525px; height: 525px; } } 
+    @media screen and (min-width: 900px) and (min-height: 900px)  { #tetris { font-size: 2.25em; width: 1050px; } #menu { width: 400px; height: 800px; } #upcoming { width: 200px; height: 200px; } #canvas { width: 600px; height: 600px; } } 
+  </style>
+</head>
+
+<body>
+
+  <div id="tetris">
+    <div id="menu">
+      <p id="start"><a href="javascript:play();">Press Space to start.</a></p>
+      <p><canvas id="upcoming"></canvas></p>
+      
+    </div>
+    <canvas id="canvas">
+    </canvas>
+  </div>
+
+  <script>
+    //************************************************************************************************************
+    // easy-maker methods
+    //************************************************************************************************************
+    function get(id)        { return document.getElementById(id);  }
+    function hide(id)       { get(id).style.visibility = 'hidden'; }
+    function show(id)       { get(id).style.visibility = null;     }
+    function timestamp()           { return new Date().getTime();                             }
+    function random(min, max)      { return (min + (Math.random() * (max - min)));            }
+    //************************************************************************************************************
+    // Variables
+    //************************************************************************************************************
+    var KEY     = { 
+      SPACE: 32, 
+      LEFT: 65, 
+      RIGHT: 68, 
+      ANTI: 87,  //change to anticlockwise
+      CLOCK: 83 //change to clockwise
+      };
+    var DIR     = { ANTI: 0, RIGHT: 1, CLOCK: 2, LEFT: 3, MIN: 0, MAX: 3 }, // Direction of the tetris blocks.
+        canvas  = get('canvas'),
+        ctx     = canvas.getContext('2d'),
+        ucanvas = get('upcoming'),
+        uctx    = ucanvas.getContext('2d'),
+        speed   = { start: 0.6, decrement: 0.005, min: 0.1 }, // how long before piece drops by 1 row (seconds)
+        nx      = 20, // width of tetris showcase (in blocks) 
+        ny      = 20, // height of tetris showcase (in blocks)
+        nu      = 7;  // width/height of upcoming preview (in blocks)
+    var dx, dy,        // pixel size of a single tetris block
+        blocks,        // 2 dimensional array (nx*ny) representing tetris showcase - either empty block or occupied by a 'piece'
+        actions,       // queue of user actions (inputs)
+        playing,       // true|false - game is in progress
+        dt,            // time since starting this game
+        current,       // the current piece
+        next,          // the next piece
+        rows,          // number of completed rows in the current game
+        step;          // how long before current piece drops by 1 row
+
+    //************************************************************************************************************
+    // tetris pieces:
+    // The pieces are represented as 4x4 matrix where in each position of the shape is considered as a 16bit
+    //  integer. For example: i(****) can be represented as 0x2222 in which it occupies 2^1 column.
+    //************************************************************************************************************
+    var i = { size: 4, blocks: [0x0F00, 0x2222, 0x00F0, 0x4444], color: '#E6CCFF'   };
+    var j = { size: 3, blocks: [0x44C0, 0x8E00, 0x6440, 0x0E20], color: '#E6CCFF'   };
+    var l = { size: 3, blocks: [0x4460, 0x0E80, 0xC440, 0x2E00], color: '#E6CCFF'   };
+    var o = { size: 2, blocks: [0xCC00, 0xCC00, 0xCC00, 0xCC00], color: '#E6CCFF'   };
+    var z = { size: 3, blocks: [0x0C60, 0x4C80, 0xC600, 0x2640], color: '#E6CCFF'   };
+
+    //************************************************************************************************************
+    // Every bit or position is checked for occupancy. If occupied the rows and columns are added accordingly.
+    // bit variable here is using >> which shifts the bits one by one to check for the occupancy.
+    //************************************************************************************************************
+    function bitcheck(type, x, y, dir, fn) {
+      var bit, result, row = 0, col = 0, blocks = type.blocks[dir];
+      for(bit = 0x8000 ; bit > 0 ; bit = bit >> 1) {
+        if (blocks & bit) {
+          fn(x + col, y + row);
+        }
+        if (++col === 4) {
+          col = 0;
+          ++row;
+        }
+      }
+    }
+
+    //************************************************************************************************************
+    // The grid bit is checked if it taken position.
+    //************************************************************************************************************
+    function occupied(type, x, y, dir) {
+      var result = false
+      bitcheck(type, x, y, dir, function(x, y) {
+        if ((x < 0) || (x >= nx) || (y < 0) || (y >= ny) || getBlock(x,y))
+          result = true;
+      });
+      return result;
+    }
+    function unoccupied(type, x, y, dir) {
+      return !occupied(type, x, y, dir);
+    }
+    //************************************************************************************************************
+    // Random pick of tetris piece.
+    //************************************************************************************************************
+    var pieces = [];
+    function randomPiece() {
+      if (pieces.length == 0)
+      pieces = [i,j,l,o,z];
+      var type = pieces.splice(random(0, pieces.length-1), 1)[0];
+      return { type: type, dir: DIR.ANTI, x: Math.round(random(0, nx - type.size)), y: 0 };
+    }
+    //************************************************************************************************************
+    // starting function def
+    //************************************************************************************************************
+    function run() {
+      addEvents(); // attach keydown and resize events
+      var last = now = timestamp();
+      function frame() {
+        now = timestamp();
+        update(Math.min(1, (now - last) / 1000.0)); // using requestAnimationFrame tells the browser that we have an animation occuring and here it is moving of the tetris blocks.
+        draw();
+        last = now;
+       requestAnimationFrame(frame, canvas);
+      }
+      resize(); // setup all our sizing information
+      reset();  // reset the per-game variables
+      frame();  // start the first frame
+    }
+
+    function addEvents() {
+      document.addEventListener('keydown', keydown, false); //event listener for a,d,w,s, and space
+      window.addEventListener('resize', resize, false); //helps in resizing the canvas
+    }
+    function resize(event) {
+      canvas.width   = canvas.clientWidth;  // set canvas size equal to its physical actual size
+      canvas.height  = canvas.clientHeight; // set canvas size equal to its physical actual size
+      ucanvas.width  = ucanvas.clientWidth;
+      ucanvas.height = ucanvas.clientHeight;
+      dx = canvas.width  / nx; // pixel size of a single tetris block
+      dy = canvas.height / ny; // (ditto)
+      validate();
+      validateNext();
+    }
+    function keydown(ev) {
+      var handled = false;
+      if (playing) {
+        switch(ev.keyCode) {
+          case KEY.LEFT:   actions.push(DIR.LEFT);  handled = true; break;
+          case KEY.RIGHT:  actions.push(DIR.RIGHT); handled = true; break;
+          case KEY.ANTI:     actions.push(DIR.ANTI);    handled = true; break;
+          case KEY.CLOCK:   actions.push(DIR.CLOCK);  handled = true; break;
+        }
+      }
+      else if (ev.keyCode == KEY.SPACE) {
+        play();
+        handled = true;
+      }
+      } 
+    //************************************************************************************************************
+    // function defs
+    //************************************************************************************************************
+    function play() { hide('start'); reset();          playing = true;  }
+    function lose() { show('start'); playing = false; }
+    function clearRows()            { setRows(0); } 
+    function setRows(n)             { rows = n; step = Math.max(speed.min, speed.start - (speed.decrement*rows)); validateRows(); } 
+    function addRows(n)             { setRows(rows + n); }
+    function getBlock(x,y)          { return (blocks && blocks[x] ? blocks[x][y] : null); }
+    function setBlock(x,y,type)     { blocks[x] = blocks[x] || []; blocks[x][y] = type; validate(); }
+    function clearBlocks()          { blocks = []; validate(); }
+    function clearActions()         { actions = []; }
+    //to set the current tetris block
+    function setCurrentPiece(piece) { 
+      current = piece || randomPiece(); //This means "piece" is an optional argument and "randonPiece()" will be the default when piece argument is not passed! 
+    }
+
+    //to randomly select the next tetris block
+    function setNextPiece(piece)    { 
+      next    = piece || randomPiece(); 
+      validateNext(); //this is to change the tetris block in the upcoming block. the change happens only when the var valid.next = true. 
+    }
+    function reset() {
+      dt = 0;
+      clearActions();
+      clearBlocks();
+      clearRows(); 
+      setCurrentPiece(next);
+      setNextPiece();
+    }
+    function update(idt) {
+      if (playing) {
+        //if (vscore < score)
+          //setVisualScore(vscore + 1);
+        handle(actions.shift());
+        dt = dt + idt;
+        if (dt > step) {
+          dt = dt - step;
+          drop();
+        }
+      }
+    }
+    function handle(action) {
+      switch(action) {
+        case DIR.LEFT:  move(DIR.LEFT);  break;
+        case DIR.RIGHT: move(DIR.RIGHT); break;
+        case DIR.ANTI:    antiRotate();    break;
+        case DIR.CLOCK:  rotate();        break;
+      }
+    }
+    function move(dir) {
+      var x = current.x, y = current.y;
+      switch(dir) {
+        case DIR.RIGHT: x = x + 1; break;
+        case DIR.LEFT:  x = x - 1; break;
+        case DIR.CLOCK:  y = y + 1; break;
+      }
+      if (unoccupied(current.type, x, y, current.dir)) {
+        current.x = x;
+        current.y = y;
+        validate();
+        return true;
+      }
+      else {
+        return false;
+      }
+    }
+    function rotate() {
+      var newdir = (current.dir == DIR.MAX ? DIR.MIN : current.dir + 1);
+      if (unoccupied(current.type, current.x, current.y, newdir)) {
+        current.dir = newdir;
+        validate();
+      }
+    }
+    function antiRotate() {
+      var newdir = (current.dir == DIR.MIN ? DIR.MAX : current.dir - 1);
+      if (unoccupied(current.type, current.x, current.y, newdir)) {
+        current.dir = newdir;
+        validate();
+      }
+    }
+    function drop() {
+      if (!move(DIR.CLOCK)) {
+        dropPiece();
+        removeLines();
+        setCurrentPiece(next);
+        setNextPiece(randomPiece());
+        clearActions();
+        if (occupied(current.type, current.x, current.y, current.dir)) {
+          lose();
+        }
+      }
+    }
+    function dropPiece() {
+      bitcheck(current.type, current.x, current.y, current.dir, function(x, y) {
+        setBlock(x, y, current.type);
+      });
+    }
+    function removeLines() {
+      var x, y, complete, n = 0;
+      for(y = ny ; y > 0 ; --y) {
+        complete = true;
+        for(x = 0 ; x < nx ; ++x) {
+          if (!getBlock(x, y))
+            complete = false;
+        }
+        if (complete) {
+          removeLine(y);
+          y = y + 1; // recheck same line
+          n++;
+        }
+      }
+      if (n > 0) {
+        addRows(n);
+      }
+    }
+    function removeLine(n) {
+      var x, y;
+      for(y = n ; y >= 0 ; --y) {
+        for(x = 0 ; x < nx ; ++x)
+          setBlock(x, y, (y == 0) ? null : getBlock(x, y-1));
+      }
+    }
+    //************************************************************************************************************
+    // validations
+    //************************************************************************************************************
+    var valid = {};
+    function validate()         { valid.showcase  = true; }
+    function validateNext()     { valid.next   = true; }
+    function validateRows()     { valid.rows   = true; }
+    function draw() {
+      ctx.save();
+      ctx.lineWidth = 1;
+      ctx.translate(0.5, 0.5); // for crisp 1px black lines
+      drawshowcase();
+      drawNext();
+      ctx.restore();
+    }
+    function drawshowcase() {
+      if (valid.showcase) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (playing)
+          drawPiece(ctx, current.type, current.x, current.y, current.dir);
+        var x, y, block;
+        for(y = 0 ; y < ny ; y++) {
+          for (x = 0 ; x < nx ; x++) {
+            if (block = getBlock(x,y))
+              drawBlock(ctx, x, y, block.color);
+          }
+        }
+        ctx.strokeRect(0, 0, nx*dx - 1, ny*dy - 1); // showcase boundary
+        valid.showcase = false;
+      }
+    }
+    function drawNext() {
+      if (valid.next) {
+        var padding = (nu - next.type.size) / 2; // to be improved
+        uctx.save();
+        uctx.translate(0.5, 0.5);
+        uctx.clearRect(0, 0, nu*dx, nu*dy);
+        drawPiece(uctx, next.type, padding, padding, next.dir);
+        uctx.strokeRect(0, 0, nu*dx - 1, nu*dy - 1);
+        uctx.restore();
+        valid.next = false;
+      }
+    }
+    function drawPiece(ctx, type, x, y, dir) {
+      bitcheck(type, x, y, dir, function(x, y) {
+        drawBlock(ctx, x, y, type.color);
+      });
+    }
+    function drawBlock(ctx, x, y, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x*dx, y*dy, dx, dy);
+      ctx.strokeRect(x*dx, y*dy, dx, dy)
+    }
+    //************************************************************************************************************
+    // starting the game with run() function
+    //************************************************************************************************************
+    run();
+  </script>
+
+</body>
+</html>
